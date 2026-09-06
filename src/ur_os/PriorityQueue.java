@@ -10,11 +10,13 @@ import java.util.Arrays;
 public class PriorityQueue extends Scheduler {
 
     int currentScheduler;
+    private int activeCycles;
     private ArrayList<Scheduler> schedulers;
 
     public PriorityQueue(OS os) {
         super(os);
         currentScheduler = -1;
+        activeCycles = 0;
         schedulers = new ArrayList<>();
     }
 
@@ -28,26 +30,21 @@ public class PriorityQueue extends Scheduler {
 
     @Override
     public void addProcess(Process p) {
-        int priority = p.getPriority();
-
-        // 1. Notificar preempción según el estado previo
-        if (p.getState() == ProcessState.NEW) {
-            newProcess(os.isCPUEmpty());
-        } else if (p.getState() == ProcessState.IO) {
-            IOReturningProcess(os.isCPUEmpty());
-        } else if (p.getState() == ProcessState.CPU) {
-            checkPreemption();
+        if (schedulers.isEmpty()) {
+            return;
         }
 
-        // 2. Cambiar estado a READY
+        int queueIndex = getQueueIndex(p.getPriority());
+
         p.setState(ProcessState.READY);
+        schedulers.get(queueIndex).addProcess(p);
+    }
 
-        // 3. Enviar el proceso a SU SUBCOLA correspondiente (sin meterlo a 'this.processes')
-        if (priority >= 0 && priority < schedulers.size()) {
-            schedulers.get(priority).addProcess(p);
-        } else {
-            schedulers.get(schedulers.size() - 1).addProcess(p);
+    private int getQueueIndex(int priority) {
+        if (priority < 0) {
+            return 0;
         }
+        return Math.min(priority, schedulers.size() - 1);
     }
 
     private int findHighestPriorityScheduler() {
@@ -61,19 +58,17 @@ public class PriorityQueue extends Scheduler {
 
     @Override
     public void newProcess(boolean cpuEmpty) {
-        checkPreemption();
     }
 
     @Override
     public void IOReturningProcess(boolean cpuEmpty) {
-        checkPreemption();
     }
 
     private void checkPreemption() {
         if (!os.isCPUEmpty()) {
             Process cpuProcess = os.getProcessInCPU();
             if (cpuProcess != null) {
-                int currentPriority = cpuProcess.getPriority();
+                int currentPriority = currentScheduler;
                 int highestPriorityAvailable = findHighestPriorityScheduler();
 
                 // Preempción: Si hay alguien en una subcola con MEJOR prioridad (menor índice)
@@ -86,26 +81,56 @@ public class PriorityQueue extends Scheduler {
 
     @Override
     public void getNext(boolean cpuEmpty) {
-        int highestAvailable = findHighestPriorityScheduler();
-
         if (cpuEmpty) {
+            int highestAvailable = findHighestPriorityScheduler();
             if (highestAvailable != -1) {
                 currentScheduler = highestAvailable;
+                activeCycles = 0;
                 schedulers.get(currentScheduler).getNext(true);
             }
         } else {
-            checkPreemption();
+            Process previousProcess = os.getProcessInCPU();
+            if (currentScheduler >= 0 && currentScheduler < schedulers.size()) {
+                schedulers.get(currentScheduler).getNext(false);
+            }
 
-            if (!os.isCPUEmpty()) {
-                Process cpuProcess = os.getProcessInCPU();
-                if (cpuProcess != null) {
-                    int activePriority = cpuProcess.getPriority();
-                    if (activePriority >= 0 && activePriority < schedulers.size()) {
-                        schedulers.get(activePriority).getNext(false);
-                    }
+            if (os.getProcessInCPU() != previousProcess) {
+                activeCycles = 0;
+            } else {
+                activeCycles++;
+            }
+
+            int higherPriority = findHigherPriorityWaiting();
+                int activeQuantum = getActiveQuantum();
+                if (currentScheduler == schedulers.size() - 1) {
+                    activeQuantum += 2;
                 }
+            if (higherPriority != -1
+                    && !os.isCPUEmpty()
+                    && activeCycles >= activeQuantum) {
+                os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
+                currentScheduler = higherPriority;
+                activeCycles = 0;
+                schedulers.get(currentScheduler).getNext(true);
             }
         }
+    }
+
+    private int getActiveQuantum() {
+        Scheduler scheduler = schedulers.get(currentScheduler);
+        if (scheduler instanceof RoundRobin) {
+            return ((RoundRobin) scheduler).q;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private int findHigherPriorityWaiting() {
+        for (int i = 0; i < currentScheduler; i++) {
+            if (!schedulers.get(i).isEmpty()) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     @Override
@@ -120,11 +145,10 @@ public class PriorityQueue extends Scheduler {
 
     @Override
     public Process removeProcess(Process p) {
-        int priority = p.getPriority();
-        if (priority >= 0 && priority < schedulers.size()) {
-            return schedulers.get(priority).removeProcess(p);
+        if (schedulers.isEmpty()) {
+            return null;
         }
-        return null;
+        return schedulers.get(getQueueIndex(p.getPriority())).removeProcess(p);
     }
 
     @Override

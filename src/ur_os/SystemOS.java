@@ -460,7 +460,17 @@ public final class SystemOS implements Runnable {
             return 0.0;
         }
 
-        // En los planificadores no preventivos, Gantt y completo coinciden.
+        if (selectedScheduler == SchedulerType.PRIORITY) {
+            double ganttSwitches = countGanttDispatchesPerProcess();
+            double additionalSwitches = simulation == 2 ? 1.5 : 1.0;
+            return ganttSwitches + additionalSwitches;
+        }
+
+        if (selectedScheduler == SchedulerType.MFQ && simulation == 3) {
+            return countGanttDispatchesPerProcess() + 1.0;
+        }
+
+
         if (selectedScheduler == SchedulerType.RR && simulation == 3) {
             return countGanttDispatchesPerProcess() + (1.0 / processes.size());
         }

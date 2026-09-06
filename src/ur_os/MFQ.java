@@ -2,6 +2,7 @@ package ur_os;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 
 /**
  * Multilevel Feedback Queue (MFQ)
@@ -10,11 +11,17 @@ public class MFQ extends Scheduler {
 
     int currentScheduler;
     private ArrayList<Scheduler> schedulers;
+    private HashMap<Integer, Integer> processLevels;
+    private int activeCycles;
+    private boolean quantumExpired;
 
     public MFQ(OS os) {
         super(os);
         currentScheduler = -1;
         schedulers = new ArrayList<>();
+        processLevels = new HashMap<>();
+        activeCycles = 0;
+        quantumExpired = false;
     }
 
     public MFQ(OS os, Scheduler... s) {
@@ -27,35 +34,25 @@ public class MFQ extends Scheduler {
 
     @Override
     public void addProcess(Process p) {
-        int priority = p.getPriority();
+        if (schedulers.isEmpty()) {
+            return;
+        }
 
+        int level;
         if (p.getState() == ProcessState.NEW) {
-            // Regla 1: Todo proceso nuevo inicia en la cola de máxima prioridad (Cola 0)
-            priority = 0;
-            p.setPriority(priority);
-            newProcess(os.isCPUEmpty());
-
+            level = 0;
         } else if (p.getState() == ProcessState.IO) {
-            // Regla 2: Si regresa de I/O, conserva su prioridad actual (premio a proceso interactivo)
-            IOReturningProcess(os.isCPUEmpty());
-
-        } else if (p.getState() == ProcessState.CPU) {
-            // Regla 3: Si viene de ser expulsado de la CPU por agotar su quantum -> DEGRADACIÓN (Castigo)
-            if (priority < schedulers.size() - 1) {
-                priority++;
-                p.setPriority(priority);
-            }
-            checkPreemption();
-        }
-
-        p.setState(ProcessState.READY);
-
-        // Añadir el proceso a la subcola asignada a su prioridad actual
-        if (priority >= 0 && priority < schedulers.size()) {
-            schedulers.get(priority).addProcess(p);
+            level = 0;
         } else {
-            schedulers.get(schedulers.size() - 1).addProcess(p);
+            level = processLevels.getOrDefault(p.getPid(), 0);
+            if (p.getState() == ProcessState.CPU && quantumExpired) {
+                level = Math.min(level + 1, schedulers.size() - 1);
+            }
         }
+
+        processLevels.put(p.getPid(), level);
+        p.setState(ProcessState.READY);
+        schedulers.get(level).processes.add(p);
     }
 
     private int findHighestPriorityScheduler() {
@@ -68,52 +65,67 @@ public class MFQ extends Scheduler {
     }
 
     @Override
-    public void newProcess(boolean cpuEmpty) {
-        checkPreemption();
-    }
+    public void newProcess(boolean cpuEmpty) {}
 
     @Override
-    public void IOReturningProcess(boolean cpuEmpty) {
-        checkPreemption();
-    }
-
-    private void checkPreemption() {
-        if (!os.isCPUEmpty()) {
-            Process cpuProcess = os.getProcessInCPU();
-            if (cpuProcess != null) {
-                int currentPriority = cpuProcess.getPriority();
-                int highestPriorityAvailable = findHighestPriorityScheduler();
-
-                // Si un proceso llega a una cola de MAYOR prioridad que el que está ejecutándose en la CPU
-                if (highestPriorityAvailable != -1 && highestPriorityAvailable < currentPriority) {
-                    os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
-                }
-            }
-        }
-    }
+    public void IOReturningProcess(boolean cpuEmpty) {}
 
     @Override
     public void getNext(boolean cpuEmpty) {
-        int highestAvailable = findHighestPriorityScheduler();
-
         if (cpuEmpty) {
-            if (highestAvailable != -1) {
-                currentScheduler = highestAvailable;
-                schedulers.get(currentScheduler).getNext(true);
-            }
-        } else {
-            checkPreemption();
+            dispatchNext();
+            return;
+        }
 
-            if (!os.isCPUEmpty()) {
-                Process cpuProcess = os.getProcessInCPU();
-                if (cpuProcess != null) {
-                    int activePriority = cpuProcess.getPriority();
-                    if (activePriority >= 0 && activePriority < schedulers.size()) {
-                        schedulers.get(activePriority).getNext(false);
-                    }
-                }
+        if (currentScheduler < 0 || currentScheduler >= schedulers.size()) {
+            dispatchNext();
+            return;
+        }
+
+        int quantum = getQuantum(currentScheduler);
+        if (quantum == Integer.MAX_VALUE) {
+            return;
+        }
+
+        activeCycles++;
+        if (activeCycles >= quantum) {
+            quantumExpired = true;
+            os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
+            quantumExpired = false;
+            activeCycles = 0;
+            dispatchNext();
+        }
+    }
+
+    private void dispatchNext() {
+        int nextLevel = findHighestPriorityScheduler();
+        if (nextLevel == -1) {
+            currentScheduler = -1;
+            activeCycles = 0;
+            return;
+        }
+
+        currentScheduler = nextLevel;
+        activeCycles = 0;
+        Process next = schedulers.get(nextLevel).processes.poll();
+        os.interrupt(InterruptType.SCHEDULER_RQ_TO_CPU, next);
+    }
+
+    private int getQuantum(int level) {
+        Scheduler scheduler = schedulers.get(level);
+        if (scheduler instanceof RoundRobin) {
+            return ((RoundRobin) scheduler).q;
+        }
+        return Integer.MAX_VALUE;
+    }
+
+    private int findHigherPriorityWaiting() {
+        for (int i = 0; i < currentScheduler; i++) {
+            if (!schedulers.get(i).isEmpty()) {
+                return i;
             }
         }
+        return -1;
     }
 
     @Override
@@ -128,9 +140,9 @@ public class MFQ extends Scheduler {
 
     @Override
     public Process removeProcess(Process p) {
-        int priority = p.getPriority();
-        if (priority >= 0 && priority < schedulers.size()) {
-            return schedulers.get(priority).removeProcess(p);
+        Integer level = processLevels.get(p.getPid());
+        if (level != null && level >= 0 && level < schedulers.size()) {
+            return schedulers.get(level).removeProcess(p);
         }
         return null;
     }
