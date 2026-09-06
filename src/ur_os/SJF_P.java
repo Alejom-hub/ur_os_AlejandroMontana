@@ -37,7 +37,15 @@ public class SJF_P extends Scheduler {
             }
 
             processes.remove(shortest);
+            addContextSwitch();
+            markFirstExecution(shortest);
             os.interrupt(InterruptType.SCHEDULER_RQ_TO_CPU, shortest);
+        }
+    }
+
+    private void markFirstExecution(Process process) {
+        if (process.getFirstExecutionTime() == -1) {
+            process.setFirstExecutionTime(os.system.getTime());
         }
     }
 }

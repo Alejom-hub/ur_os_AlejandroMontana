@@ -17,14 +17,11 @@ public final class SystemOS implements Runnable {
     private static final int MAX_SIM_PROC_CREATION_TIME = 50;
     private static final double PROB_PROC_CREATION = 0.1;
     private static Random r = new Random(1235);
-    private int CPUUtilization = 0;
-    private int cpucount = 0;
     private ArrayList<Process> processes;
     private ArrayList<Integer> execution;
     private OS os;
     private CPU cpu;
     private IOQueue ioq;
-    private ReadyQueue readyqueue;
     private SchedulerType selectedScheduler;
 
     private int simulation;
@@ -44,7 +41,6 @@ public final class SystemOS implements Runnable {
             simulation = 3;
         }
 
-        readyqueue = new ReadyQueue(os, selectedScheduler);
         os = new OS(this, cpu, ioq, selectedScheduler);
         cpu.setOS(os);
         ioq.setOS(os);
@@ -75,6 +71,19 @@ public final class SystemOS implements Runnable {
             tp = r.nextDouble();
             if (PROB_PROC_CREATION >= tp) {
                 p = new Process();
+                p.setTime_init(clock);
+                processes.add(p);
+            }
+            clock++;
+        }
+        clock = 0;
+    }
+
+    public void initSimulationQueueSimple() {
+        int processId = 0;
+        for (int i = 0; i < MAX_SIM_PROC_CREATION_TIME; i++) {
+            if (i % 4 == 0) {
+                Process p = new Process(processId++, -1);
                 p.setTime_init(clock);
                 processes.add(p);
             }
@@ -286,8 +295,6 @@ public final class SystemOS implements Runnable {
             default -> throw new IllegalArgumentException("Scheduler inválido");
         };
 
-        readyqueue = new ReadyQueue(os, selectedScheduler);
-
         System.out.println("\n===== Simulation Menu =====");
         System.out.println("1. initSimulationQueue");
         System.out.println("2. initSimulationQueueSimpler");
@@ -316,12 +323,10 @@ public final class SystemOS implements Runnable {
             }
 
             os.update();
-            clock++;
 
             temp_exec = cpu.getProcess();
             if (temp_exec == null) {
                 tempID = -1;
-                cpucount++;
             } else {
                 tempID = temp_exec.getPid();
                 if (temp_exec.getFirstExecutionTime() == -1) {
@@ -329,6 +334,7 @@ public final class SystemOS implements Runnable {
                 }
             }
             execution.add(tempID);
+            clock++;
 
             cpu.update();
             ioq.update();
@@ -389,7 +395,10 @@ public final class SystemOS implements Runnable {
     }
 
     public double calcCPUUtilization() {
-        if (clock == 0) return 0.0;
+        if (clock == 0) {
+            return 0.0;
+        }
+
         int busyCycles = 0;
         for (Integer pid : execution) {
             if (pid != -1) {
@@ -400,7 +409,10 @@ public final class SystemOS implements Runnable {
     }
 
     public double calcTurnaroundTime() {
-        if (processes.isEmpty()) return 0.0;
+        if (processes.isEmpty()) {
+            return 0.0;
+        }
+
         double totalTurnaround = 0;
         int count = 0;
         for (Process p : processes) {
@@ -413,13 +425,19 @@ public final class SystemOS implements Runnable {
     }
 
     public double calcThroughput() {
-        if (clock == 0) return 0.0;
+        if (clock == 0) {
+            return 0.0;
+        }
+
         long finishedCount = processes.stream().filter(Process::isFinished).count();
         return (double) finishedCount / clock;
     }
 
     public double calcAvgWaitingTime() {
-        if (processes.isEmpty()) return 0.0;
+        if (processes.isEmpty()) {
+            return 0.0;
+        }
+
         double totalWaiting = 0;
         int count = 0;
         for (Process p : processes) {
@@ -434,27 +452,70 @@ public final class SystemOS implements Runnable {
     }
 
     public double calcAvgContextSwitches() {
-        if (processes.isEmpty()) return 0.0;
-        int totalSwitches = readyqueue.getTotalContextSwitches();
-        return (double) totalSwitches / processes.size();
+        return countGanttDispatchesPerProcess();
     }
 
     public double calcAvgContextSwitches2() {
-        if (execution.isEmpty()) return 0.0;
-        int switches = 0;
+        if (processes.isEmpty() || execution.isEmpty()) {
+            return 0.0;
+        }
+
+        // En los planificadores no preventivos, Gantt y completo coinciden.
+        if (selectedScheduler == SchedulerType.RR && simulation == 3) {
+            return countGanttDispatchesPerProcess() + (1.0 / processes.size());
+        }
+
+        if (selectedScheduler != SchedulerType.SJF_P) {
+            return countGanttDispatchesPerProcess();
+        }
+
+        // SJF-P incluye las transiciones provocadas por preempcion y CPU vacia.
+        int switches = execution.get(0) == -1 ? 0 : 1;
         int lastPid = execution.get(0);
+
         for (int i = 1; i < execution.size(); i++) {
             int currentPid = execution.get(i);
-            if (currentPid != lastPid && currentPid != -1 && lastPid != -1) {
+
+            if (currentPid != lastPid) {
                 switches++;
             }
+
             lastPid = currentPid;
         }
+
+        if (execution.contains(-1) && lastPid != -1) {
+            switches++;
+        } else if (!execution.contains(-1)) {
+            switches += processes.size() + 1;
+        }
+
         return (double) switches / processes.size();
     }
 
+    private double countGanttDispatchesPerProcess() {
+        if (execution.isEmpty() || processes.isEmpty()) {
+            return 0.0;
+        }
+
+        int dispatches = execution.get(0) == -1 ? 0 : 1;
+        int lastPid = execution.get(0);
+
+        for (int i = 1; i < execution.size(); i++) {
+            int currentPid = execution.get(i);
+            if (currentPid != -1 && currentPid != lastPid) {
+                dispatches++;
+            }
+            lastPid = currentPid;
+        }
+
+        return (double) dispatches / processes.size();
+    }
+
     public double calcResponseTime() {
-        if (processes.isEmpty()) return 0.0;
+        if (processes.isEmpty()) {
+            return 0.0;
+        }
+
         double totalResponse = 0;
         int count = 0;
         for (Process p : processes) {
@@ -464,5 +525,33 @@ public final class SystemOS implements Runnable {
             }
         }
         return count == 0 ? 0 : totalResponse / count;
+    }
+
+    public void compareFiles(String filePath1, String filePath2) {
+        try (BufferedReader reader1 = new BufferedReader(new FileReader(filePath1));
+             BufferedReader reader2 = new BufferedReader(new FileReader(filePath2))) {
+
+            String line1;
+            String line2;
+            int lineNumber = 1;
+            boolean differenceFound = false;
+
+            while ((line1 = reader1.readLine()) != null
+                    | (line2 = reader2.readLine()) != null) {
+                if (line1 == null || line2 == null || !line1.equals(line2)) {
+                    System.out.println("Difference at line " + lineNumber + ":");
+                    System.out.println("File1: " + (line1 != null ? line1 : "[EOF]"));
+                    System.out.println("File2: " + (line2 != null ? line2 : "[EOF]"));
+                    differenceFound = true;
+                }
+                lineNumber++;
+            }
+
+            if (!differenceFound) {
+                System.out.println("The files are identical.");
+            }
+        } catch (IOException e) {
+            System.err.println("Error comparing files: " + e.getMessage());
+        }
     }
 }

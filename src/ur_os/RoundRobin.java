@@ -36,6 +36,8 @@ public class RoundRobin extends Scheduler {
             if (!processes.isEmpty()) {
                 Process next = processes.poll();
                 resetCounter();
+                addContextSwitch();
+                markFirstExecution(next);
                 os.interrupt(InterruptType.SCHEDULER_RQ_TO_CPU, next);
             }
         } else {
@@ -45,6 +47,8 @@ public class RoundRobin extends Scheduler {
                 if (!processes.isEmpty()) {
                     os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
                     Process next = processes.poll();
+                    addContextSwitch();
+                    markFirstExecution(next);
                     os.interrupt(InterruptType.SCHEDULER_RQ_TO_CPU, next);
                 }
             }
@@ -56,4 +60,10 @@ public class RoundRobin extends Scheduler {
 
     @Override
     public void IOReturningProcess(boolean cpuEmpty) {} // No preventivo en este evento
+
+    private void markFirstExecution(Process process) {
+        if (process.getFirstExecutionTime() == -1) {
+            process.setFirstExecutionTime(os.system.getTime());
+        }
+    }
 }
