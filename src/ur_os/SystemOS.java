@@ -387,122 +387,73 @@ public final class SystemOS implements Runnable {
     public void showProcesses() {
         System.out.println("Process list:");
         StringBuilder sb = new StringBuilder();
+        
         for (Process process : processes) {
             sb.append(process);
             sb.append("\n");
         }
+        
         System.out.println(sb.toString());
     }
-
+    
     public double calcCPUUtilization() {
         if (clock == 0) {
             return 0.0;
         }
 
-        int busyCycles = 0;
+        int activeCycles = 0;
         for (Integer pid : execution) {
             if (pid != -1) {
-                busyCycles++;
+                activeCycles++;
             }
         }
-        return (double) busyCycles / clock;
+        return (double) activeCycles / clock;
     }
-
+    
     public double calcTurnaroundTime() {
         if (processes.isEmpty()) {
             return 0.0;
         }
 
-        double totalTurnaround = 0;
+        double sumTurnaround = 0;
         int count = 0;
         for (Process p : processes) {
             if (p.isFinished()) {
-                totalTurnaround += (p.getTime_finished() - p.getTime_init());
+                sumTurnaround += (p.getTime_finished() - p.getTime_init());
                 count++;
             }
         }
-        return count == 0 ? 0 : totalTurnaround / count;
+        return count == 0 ? 0 : sumTurnaround / count;
     }
-
+    
     public double calcThroughput() {
         if (clock == 0) {
             return 0.0;
         }
 
-        long finishedCount = processes.stream().filter(Process::isFinished).count();
-        return (double) finishedCount / clock;
+        return (double) processes.size() / clock;
     }
-
+    
     public double calcAvgWaitingTime() {
         if (processes.isEmpty()) {
             return 0.0;
         }
 
-        double totalWaiting = 0;
+        double sumWaiting = 0;
         int count = 0;
         for (Process p : processes) {
             if (p.isFinished()) {
-                int turnaround = p.getTime_finished() - p.getTime_init();
-                int cpuTime = p.getTotalExecutionTime();
-                totalWaiting += (turnaround - cpuTime);
+                int tt = p.getTime_finished() - p.getTime_init();
+                int idealCycles = p.getTotalExecutionTime(); // CPU burst cycles
+                sumWaiting += (tt - idealCycles);
                 count++;
             }
         }
-        return count == 0 ? 0 : totalWaiting / count;
+        return count == 0 ? 0 : sumWaiting / count;
     }
-
+    
+    // Everytime a process is taken out from memory, when an interruption occurs (solo Gantt)
     public double calcAvgContextSwitches() {
-        return countGanttDispatchesPerProcess();
-    }
-
-    public double calcAvgContextSwitches2() {
-        if (processes.isEmpty() || execution.isEmpty()) {
-            return 0.0;
-        }
-
-        if (selectedScheduler == SchedulerType.PRIORITY) {
-            double ganttSwitches = countGanttDispatchesPerProcess();
-            double additionalSwitches = simulation == 2 ? 1.5 : 1.0;
-            return ganttSwitches + additionalSwitches;
-        }
-
-        if (selectedScheduler == SchedulerType.MFQ && simulation == 3) {
-            return countGanttDispatchesPerProcess() + 1.0;
-        }
-
-
-        if (selectedScheduler == SchedulerType.RR && simulation == 3) {
-            return countGanttDispatchesPerProcess() + (1.0 / processes.size());
-        }
-
-        if (selectedScheduler != SchedulerType.SJF_P) {
-            return countGanttDispatchesPerProcess();
-        }
-
-        // SJF-P incluye las transiciones provocadas por preempcion y CPU vacia.
-        int switches = execution.get(0) == -1 ? 0 : 1;
-        int lastPid = execution.get(0);
-
-        for (int i = 1; i < execution.size(); i++) {
-            int currentPid = execution.get(i);
-
-            if (currentPid != lastPid) {
-                switches++;
-            }
-
-            lastPid = currentPid;
-        }
-
-        if (execution.contains(-1) && lastPid != -1) {
-            switches++;
-        } else if (!execution.contains(-1)) {
-            switches += processes.size() + 1;
-        }
-
-        return (double) switches / processes.size();
-    }
-
-    private double countGanttDispatchesPerProcess() {
         if (execution.isEmpty() || processes.isEmpty()) {
             return 0.0;
         }
@@ -520,21 +471,41 @@ public final class SystemOS implements Runnable {
 
         return (double) dispatches / processes.size();
     }
+    
+    // Just context switches based on the execution timeline (completo / tablero)
+    public double calcAvgContextSwitches2() {
+        if (processes.isEmpty() || execution.isEmpty()) {
+            return 0.0;
+        }
 
+        int switches = execution.get(0) == -1 ? 0 : 1;
+        int lastPid = execution.get(0);
+
+        for (int i = 1; i < execution.size(); i++) {
+            int currentPid = execution.get(i);
+            if (currentPid != lastPid) {
+                switches++;
+            }
+            lastPid = currentPid;
+        }
+
+        return (double) switches / processes.size();
+    }
+    
     public double calcResponseTime() {
         if (processes.isEmpty()) {
             return 0.0;
         }
 
-        double totalResponse = 0;
+        double sumResponse = 0;
         int count = 0;
         for (Process p : processes) {
-            if (p.getResponseTime() != -1) {
-                totalResponse += p.getResponseTime();
+            if (p.getFirstExecutionTime() != -1) {
+                sumResponse += (p.getFirstExecutionTime() - p.getTime_init());
                 count++;
             }
         }
-        return count == 0 ? 0 : totalResponse / count;
+        return count == 0 ? 0 : sumResponse / count;
     }
 
     public void compareFiles(String filePath1, String filePath2) {

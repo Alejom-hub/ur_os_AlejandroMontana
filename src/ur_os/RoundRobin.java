@@ -44,8 +44,11 @@ public class RoundRobin extends Scheduler {
             cont++;
             if (cont >= q) {
                 resetCounter();
+                // Al expirar el quantum, se devuelve el proceso en CPU a la ReadyQueue
+                os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
+                
+                // Si esta misma subcola tiene otro proceso esperando, se asigna a la CPU de inmediato
                 if (!processes.isEmpty()) {
-                    os.interrupt(InterruptType.SCHEDULER_CPU_TO_RQ, null);
                     Process next = processes.poll();
                     addContextSwitch();
                     markFirstExecution(next);
@@ -62,7 +65,7 @@ public class RoundRobin extends Scheduler {
     public void IOReturningProcess(boolean cpuEmpty) {} // No preventivo en este evento
 
     private void markFirstExecution(Process process) {
-        if (process.getFirstExecutionTime() == -1) {
+        if (process != null && process.getFirstExecutionTime() == -1) {
             process.setFirstExecutionTime(os.system.getTime());
         }
     }
