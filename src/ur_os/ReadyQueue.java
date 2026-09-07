@@ -48,7 +48,7 @@ public class ReadyQueue {
                 createSchedulerFile("MFQ");
                 break;
             case FAIR:
-                s = new FAIR(os, 1);
+                s = new FAIR(os, 4);
                 createSchedulerFile("FAIR");
                 break;
         }
